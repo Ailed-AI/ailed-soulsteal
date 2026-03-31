@@ -93,6 +93,32 @@ enum Commands {
         file: PathBuf,
     },
 
+    /// Split a .somabin into train/val JSONL files for training.
+    Split {
+        /// Path to .somabin file.
+        file: PathBuf,
+
+        /// Output directory for train.jsonl and val.jsonl.
+        #[arg(short, long, default_value = ".")]
+        output: PathBuf,
+
+        /// Vocabulary JSON file (for decoding token IDs to UCI moves).
+        #[arg(long)]
+        vocab: Option<PathBuf>,
+
+        /// Validation split ratio (0.0-1.0).
+        #[arg(long, default_value = "0.1")]
+        val_ratio: f64,
+
+        /// Random seed for shuffling before split.
+        #[arg(long, default_value = "42")]
+        seed: u64,
+
+        /// Output raw token IDs instead of UCI moves.
+        #[arg(long)]
+        raw: bool,
+    },
+
     /// Generate or export vocabulary.
     Vocab {
         /// Generate vocabulary (all possible chess UCI moves).
@@ -124,6 +150,9 @@ fn main() -> Result<()> {
         Commands::Info { file } => cmd_info(file),
         Commands::Dump { file, vocab, game, count, json } => cmd_dump(file, vocab, game, count, json),
         Commands::Stats { file } => cmd_stats(file),
+        Commands::Split { file, output, vocab, val_ratio, seed, raw } => {
+            cmd_split(file, output, vocab, val_ratio, seed, raw)
+        }
         Commands::Vocab { generate, output } => cmd_vocab(generate, output),
     }
 }
@@ -394,6 +423,111 @@ fn cmd_stats(file: PathBuf) -> Result<()> {
         println!("  {:8} {} ({:.1}%)", name, category_counts[i],
             100.0 * category_counts[i] as f64 / total_moves.max(1) as f64);
     }
+
+    Ok(())
+}
+
+fn cmd_split(
+    file: PathBuf,
+    output_dir: PathBuf,
+    vocab_path: Option<PathBuf>,
+    val_ratio: f64,
+    seed: u64,
+    raw: bool,
+) -> Result<()> {
+    use std::io::BufWriter;
+
+    let reader = somabin::SomabinReader::open(&file)?;
+    let n = reader.num_games();
+    let vocab = vocab_path.as_ref().map(|p| Vocab::from_json(p)).transpose()?;
+
+    let special_names: std::collections::HashMap<u16, &str> = [
+        (0, "PAD"), (1, "BOS"), (2, "EOS"), (3, "WIN"), (4, "DRAW"), (5, "LOSS"),
+    ].into();
+    let outcome_names = ["win", "draw", "loss"];
+
+    // Shuffle indices with seed
+    let mut indices: Vec<usize> = (0..n).collect();
+    // Simple Fisher-Yates with seeded LCG
+    let mut rng_state = seed;
+    for i in (1..indices.len()).rev() {
+        rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let j = (rng_state >> 33) as usize % (i + 1);
+        indices.swap(i, j);
+    }
+
+    let val_count = (n as f64 * val_ratio) as usize;
+    let train_count = n - val_count;
+    let train_indices = &indices[..train_count];
+    let val_indices = &indices[train_count..];
+
+    std::fs::create_dir_all(&output_dir)?;
+    let train_path = output_dir.join("train.jsonl");
+    let val_path = output_dir.join("val.jsonl");
+
+    let mut train_file = BufWriter::new(File::create(&train_path)?);
+    let mut val_file = BufWriter::new(File::create(&val_path)?);
+
+    let write_game = |f: &mut BufWriter<File>, idx: usize| -> Result<()> {
+        let game = reader.read_game(idx)?;
+        let outcome_str = if (game.outcome as usize) < outcome_names.len() {
+            outcome_names[game.outcome as usize]
+        } else {
+            "unknown"
+        };
+
+        if raw {
+            // Raw token IDs
+            let tokens: Vec<String> = game.token_ids.iter().map(|t| t.to_string()).collect();
+            let turns: Vec<String> = game.turn_ids.iter().map(|t| t.to_string()).collect();
+            let cats: Vec<String> = game.category_ids.iter().map(|t| t.to_string()).collect();
+            writeln!(f, "{{\"tokens\":[{}],\"turns\":[{}],\"categories\":[{}],\"outcome\":\"{}\"}}",
+                tokens.join(","), turns.join(","), cats.join(","), outcome_str)?;
+        } else {
+            // UCI moves
+            let mut moves = Vec::new();
+            for &tid in &game.token_ids {
+                if let Some(name) = special_names.get(&tid) {
+                    // skip special tokens in moves list
+                    if tid >= 3 && tid <= 5 {
+                        continue; // outcome tokens handled separately
+                    }
+                    if tid <= 2 {
+                        continue; // BOS/EOS/PAD
+                    }
+                } else if let Some(ref v) = vocab {
+                    if let Some(uci) = v.get_action(tid) {
+                        moves.push(uci.to_string());
+                    }
+                } else {
+                    moves.push(format!("#{}", tid));
+                }
+            }
+            let moves_json: Vec<String> = moves.iter().map(|m| format!("\"{}\"", m)).collect();
+            writeln!(f, "{{\"moves\":[{}],\"outcome\":\"{}\",\"length\":{}}}",
+                moves_json.join(","), outcome_str, moves.len())?;
+        }
+        Ok(())
+    };
+
+    eprintln!("Splitting {} games: {} train, {} val (ratio={:.0}%, seed={})",
+        n, train_count, val_count, val_ratio * 100.0, seed);
+
+    for &idx in train_indices {
+        write_game(&mut train_file, idx)?;
+    }
+    for &idx in val_indices {
+        write_game(&mut val_file, idx)?;
+    }
+
+    train_file.flush()?;
+    val_file.flush()?;
+
+    let train_size = std::fs::metadata(&train_path)?.len();
+    let val_size = std::fs::metadata(&val_path)?.len();
+
+    eprintln!("  Train: {} ({:.1} MB)", train_path.display(), train_size as f64 / 1_048_576.0);
+    eprintln!("  Val:   {} ({:.1} MB)", val_path.display(), val_size as f64 / 1_048_576.0);
 
     Ok(())
 }
