@@ -65,6 +65,34 @@ enum Commands {
         file: PathBuf,
     },
 
+    /// Dump games from a .somabin file.
+    Dump {
+        /// Path to .somabin file.
+        file: PathBuf,
+
+        /// Vocabulary JSON file (for decoding token IDs to UCI moves).
+        #[arg(long)]
+        vocab: Option<PathBuf>,
+
+        /// Starting game index.
+        #[arg(long, default_value = "0")]
+        game: usize,
+
+        /// Number of games to dump.
+        #[arg(long, default_value = "5")]
+        count: usize,
+
+        /// Output as JSON instead of human-readable.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Export statistics from a .somabin file.
+    Stats {
+        /// Path to .somabin file.
+        file: PathBuf,
+    },
+
     /// Generate or export vocabulary.
     Vocab {
         /// Generate vocabulary (all possible chess UCI moves).
@@ -94,6 +122,8 @@ fn main() -> Result<()> {
             cmd_tokenize(input, output, vocab, elo, min_moves, max_games, result, stream_mode)
         }
         Commands::Info { file } => cmd_info(file),
+        Commands::Dump { file, vocab, game, count, json } => cmd_dump(file, vocab, game, count, json),
+        Commands::Stats { file } => cmd_stats(file),
         Commands::Vocab { generate, output } => cmd_vocab(generate, output),
     }
 }
@@ -246,6 +276,125 @@ fn cmd_tokenize(
 fn cmd_info(file: PathBuf) -> Result<()> {
     let info = somabin::read_info(&file)?;
     print!("{}", info);
+    Ok(())
+}
+
+fn cmd_dump(file: PathBuf, vocab_path: Option<PathBuf>, start: usize, count: usize, json_mode: bool) -> Result<()> {
+    let reader = somabin::SomabinReader::open(&file)?;
+
+    // Load vocab for decoding if provided
+    let vocab = vocab_path.as_ref().map(|p| Vocab::from_json(p)).transpose()?;
+
+    let special_names: std::collections::HashMap<u16, &str> = [
+        (0, "PAD"), (1, "BOS"), (2, "EOS"), (3, "WIN"), (4, "DRAW"), (5, "LOSS"),
+    ].into();
+
+    let category_names = ["pawn", "knight", "bishop", "rook", "queen", "king"];
+    let outcome_names = ["win", "draw", "loss"];
+
+    let end = std::cmp::min(start + count, reader.num_games());
+
+    for i in start..end {
+        let game = reader.read_game(i)?;
+        let outcome_str = if (game.outcome as usize) < outcome_names.len() {
+            outcome_names[game.outcome as usize]
+        } else {
+            "unknown"
+        };
+
+        if json_mode {
+            let moves: Vec<String> = game.token_ids.iter().enumerate().map(|(j, &tid)| {
+                let name = if let Some(n) = special_names.get(&tid) {
+                    n.to_string()
+                } else if let Some(ref v) = vocab {
+                    v.get_action(tid).unwrap_or("?").to_string()
+                } else {
+                    format!("#{}", tid)
+                };
+                let turn = if game.turn_ids[j] == 0 { "W" } else { "B" };
+                let cat = category_names.get(game.category_ids[j] as usize).unwrap_or(&"?");
+                format!("{{\"token\":\"{}\",\"turn\":\"{}\",\"piece\":\"{}\"}}", name, turn, cat)
+            }).collect();
+            println!("{{\"game\":{},\"length\":{},\"outcome\":\"{}\",\"moves\":[{}]}}",
+                i, game.token_ids.len(), outcome_str, moves.join(","));
+        } else {
+            println!("\n=== Game {} ({} tokens, outcome={}) ===", i, game.token_ids.len(), outcome_str);
+            let mut parts = Vec::new();
+            for (j, &tid) in game.token_ids.iter().enumerate() {
+                let turn = if game.turn_ids[j] == 0 { "W" } else { "B" };
+                let cat = category_names.get(game.category_ids[j] as usize).unwrap_or(&"?");
+
+                if let Some(name) = special_names.get(&tid) {
+                    parts.push(format!("[{}]", name));
+                } else if let Some(ref v) = vocab {
+                    let name = v.get_action(tid).unwrap_or("?");
+                    parts.push(format!("{}({},{})", name, turn, cat));
+                } else {
+                    parts.push(format!("#{}({},{})", tid, turn, cat));
+                }
+            }
+            println!("{}", parts.join(" "));
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_stats(file: PathBuf) -> Result<()> {
+    let reader = somabin::SomabinReader::open(&file)?;
+    let n = reader.num_games();
+
+    let mut total_tokens: u64 = 0;
+    let mut min_len = u16::MAX as usize;
+    let mut max_len = 0usize;
+    let mut outcomes = [0u64; 4]; // win, draw, loss, unknown
+    let mut category_counts = [0u64; 6];
+
+    for i in 0..n {
+        let game = reader.read_game(i)?;
+        let len = game.token_ids.len();
+        total_tokens += len as u64;
+        if len < min_len { min_len = len; }
+        if len > max_len { max_len = len; }
+
+        match game.outcome {
+            0 => outcomes[0] += 1,
+            1 => outcomes[1] += 1,
+            2 => outcomes[2] += 1,
+            _ => outcomes[3] += 1,
+        }
+
+        for &cat in &game.category_ids {
+            if (cat as usize) < 6 {
+                category_counts[cat as usize] += 1;
+            }
+        }
+    }
+
+    let avg_len = total_tokens as f64 / n as f64;
+
+    println!("Games:          {}", n);
+    println!("Total tokens:   {}", total_tokens);
+    println!("Avg seq len:    {:.1}", avg_len);
+    println!("Min seq len:    {}", min_len);
+    println!("Max seq len:    {}", max_len);
+    println!();
+    println!("Outcomes:");
+    println!("  Win:          {} ({:.1}%)", outcomes[0], 100.0 * outcomes[0] as f64 / n as f64);
+    println!("  Draw:         {} ({:.1}%)", outcomes[1], 100.0 * outcomes[1] as f64 / n as f64);
+    println!("  Loss:         {} ({:.1}%)", outcomes[2], 100.0 * outcomes[2] as f64 / n as f64);
+    if outcomes[3] > 0 {
+        println!("  Unknown:      {} ({:.1}%)", outcomes[3], 100.0 * outcomes[3] as f64 / n as f64);
+    }
+    println!();
+    println!("Piece moves:");
+    let piece_names = ["Pawn", "Knight", "Bishop", "Rook", "Queen", "King"];
+    let total_moves: u64 = category_counts.iter().sum();
+    for (i, name) in piece_names.iter().enumerate() {
+        println!("  {:8} {} ({:.1}%)", name, category_counts[i],
+            100.0 * category_counts[i] as f64 / total_moves.max(1) as f64);
+    }
+
     Ok(())
 }
 
