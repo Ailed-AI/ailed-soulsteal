@@ -1,6 +1,10 @@
-# ailed-soulsteal
+<p align="center">
+  <img src="assets/icon.png" alt="Soul Steal" width="200">
+</p>
 
-Fast game data extractor for ML training. Drains PGN into tokenized binary data at 60,000+ games/second.
+<h1 align="center">ailed-soulsteal</h1>
+
+<p align="center">Fast game data extractor for ML training. Drains PGN into tokenized binary data at 60,000+ games/second.</p>
 
 Named after Alucard's **Soul Steal** from *Castlevania: Symphony of the Night* — extracts the essence from game records and absorbs it into a format your model can consume. Part of the [AILED](https://github.com/Ailed-AI) cognitive architecture.
 
