@@ -43,7 +43,7 @@ impl Vocab {
     }
 
     /// Generate vocabulary from a PGN file by collecting all unique UCI moves.
-    pub fn generate_from_pgn<R: std::io::BufRead>(reader: R) -> Result<Self> {
+    pub fn generate_from_pgn<R: std::io::BufRead>(_reader: R) -> Result<Self> {
         let mut uci_moves: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
         // Generate all possible UCI strings (source-dest pairs)

@@ -41,7 +41,7 @@ impl<W: Write + Seek> SomabinWriter<W> {
     }
 
     /// Write a placeholder header and index. Call finalize() when done.
-    pub fn begin(&mut self, estimated_games: u32) -> Result<()> {
+    pub fn begin(&mut self, _estimated_games: u32) -> Result<()> {
         // Write placeholder header (64 bytes)
         self.writer.write_all(&[0u8; 64])?;
 

@@ -487,7 +487,7 @@ fn cmd_split(
             // UCI moves
             let mut moves = Vec::new();
             for &tid in &game.token_ids {
-                if let Some(name) = special_names.get(&tid) {
+                if let Some(_name) = special_names.get(&tid) {
                     // skip special tokens in moves list
                     if tid >= 3 && tid <= 5 {
                         continue; // outcome tokens handled separately

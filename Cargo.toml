@@ -2,9 +2,15 @@
 name = "ailed-soulsteal"
 version = "26.3.0"
 edition = "2021"
-description = "Fast game data extractor — drains PGN into tokenized training data for AILED-Soma"
+description = "Fast game data extractor — drains PGN into tokenized training data for ML models. 60K+ games/sec."
 license = "MIT"
 repository = "https://github.com/Ailed-AI/ailed-soulsteal"
+homepage = "https://github.com/Ailed-AI/ailed-soulsteal"
+readme = "README.md"
+keywords = ["chess", "pgn", "tokenizer", "machine-learning", "game-ai"]
+categories = ["command-line-utilities", "game-development", "science"]
+authors = ["Diego Armando Resendez Prado"]
+exclude = ["assets/*", "docs/*", "python/*"]
 
 [[bin]]
 name = "soulsteal"
