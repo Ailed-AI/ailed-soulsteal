@@ -1,6 +1,6 @@
 # UGN v0.1 — Sample games
 
-# Italian Game, short tactical finish
+# Italian Game, sharp tactical middlegame
 @game chess
   @white "Diego Resendez" @elo 1450
   @black "Ana Martinez" @elo 1380
@@ -12,12 +12,11 @@
   @rated
   @termination normal
   @result 1-0
-  : e2e4 e7e5 g1f3 b8c6 f1c4 f8c5 c2c3 g8f6 d2d4 e5d4
-  : c3d4 c5b4 b1c3 f6e4 e1g1 b4c3 b2c3 d7d5 c4b5 e4c3
-  : d1e1 c8e6 b5c6 b7c6 f3e5!{t:42} d8d6 e5c6?!{t:15} e6d7
-  : c6a7{t:8} d6d8?? a7c6 1-0
+  : e2e4 e7e5 g1f3 b8c6 f1c4 f8c5 c2c3 g8f6
+  : d2d4 e5d4 c3d4 c5b4 b1c3 f6e4!{t:520}
+  : e1g1 b4c3 b2c3 d7d5?!{t:480} c1a3 1-0
 
-# Blitz game with clock times and annotations
+# Sicilian Najdorf, blitz with clock pressure
 @game chess
   @white "Carlos Vega" @elo 1620
   @black "Sofia Chen" @elo 1590
@@ -35,9 +34,7 @@
   : d4b3{t:170} f8e7{t:168} e1g1{t:165} e8g8{t:163}
   : c1e3{t:158} b8d7!{t:155} a2a4{t:140} b7b6{t:148}
   : f2f3{t:132} c8b7{t:140} d1d2{t:120} d8c7{t:135}
-  : f1d1{t:95} f8c8{t:128} a4a5?{t:62} b6b5!{t:120}
-  : d2f2{t:30} d7c5{t:110} b3c5{t:12} d6c5{t:105}
-  : 0-1T
+  : f1d1{t:95} f8c8{t:128} 0-1T
 
 # Peaceful positional Go game
 @game go @size 9

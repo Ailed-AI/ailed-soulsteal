@@ -1,4 +1,6 @@
 pub mod chess;
+pub mod convert;
+pub mod ugn;
 
 use std::collections::HashMap;
 use std::io::BufRead;

@@ -12,7 +12,9 @@ use ailed_soulsteal::filter::result::ResultFilter;
 use ailed_soulsteal::filter::FilterChain;
 use ailed_soulsteal::format::somabin::{self, SomabinWriter};
 use ailed_soulsteal::format::stream;
-use ailed_soulsteal::game::chess::{ChessTokenizer, PgnParser};
+use ailed_soulsteal::game::chess::{ChessTokenizer, PgnParser, UciChessTokenizer};
+use ailed_soulsteal::game::ugn::UgnParser;
+use ailed_soulsteal::game::convert::pgn_to_ugn;
 use ailed_soulsteal::game::{GameParser, GameTokenizer};
 use ailed_soulsteal::vocab::Vocab;
 
@@ -57,6 +59,10 @@ enum Commands {
         /// Stream tokenized games to stdout instead of writing binary.
         #[arg(long)]
         stream: bool,
+
+        /// Input format: "pgn" (default) or "ugn".
+        #[arg(long, default_value = "pgn")]
+        format: String,
     },
 
     /// Display info about a .somabin file.
@@ -119,6 +125,16 @@ enum Commands {
         raw: bool,
     },
 
+    /// Convert PGN to UGN format.
+    Convert {
+        /// Input PGN file.
+        input: PathBuf,
+
+        /// Output UGN file.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+
     /// Generate or export vocabulary.
     Vocab {
         /// Generate vocabulary (all possible chess UCI moves).
@@ -144,8 +160,9 @@ fn main() -> Result<()> {
             max_games,
             result,
             stream: stream_mode,
+            format,
         } => {
-            cmd_tokenize(input, output, vocab, elo, min_moves, max_games, result, stream_mode)
+            cmd_tokenize(input, output, vocab, elo, min_moves, max_games, result, stream_mode, format)
         }
         Commands::Info { file } => cmd_info(file),
         Commands::Dump { file, vocab, game, count, json } => cmd_dump(file, vocab, game, count, json),
@@ -153,6 +170,7 @@ fn main() -> Result<()> {
         Commands::Split { file, output, vocab, val_ratio, seed, raw } => {
             cmd_split(file, output, vocab, val_ratio, seed, raw)
         }
+        Commands::Convert { input, output } => cmd_convert(input, output),
         Commands::Vocab { generate, output } => cmd_vocab(generate, output),
     }
 }
@@ -166,6 +184,7 @@ fn cmd_tokenize(
     max_games: Option<usize>,
     result: String,
     stream_mode: bool,
+    format: String,
 ) -> Result<()> {
     let start = Instant::now();
 
@@ -196,10 +215,20 @@ fn cmd_tokenize(
         ailed_soulsteal::io::open_input(&input)?
     };
 
-    // Parse
-    let parser = PgnParser;
-    let tokenizer = ChessTokenizer;
-    let games_iter = parser.parse(reader);
+    // Parse based on format
+    let is_ugn = format == "ugn";
+    let pgn_parser;
+    let ugn_parser;
+    let games_iter: Box<dyn Iterator<Item = ailed_soulsteal::game::RawGame>> = if is_ugn {
+        ugn_parser = UgnParser;
+        ugn_parser.parse(reader)
+    } else {
+        pgn_parser = PgnParser;
+        pgn_parser.parse(reader)
+    };
+    let chess_tokenizer = ChessTokenizer;
+    let uci_tokenizer = UciChessTokenizer;
+    let tokenizer: &dyn GameTokenizer = if is_ugn { &uci_tokenizer } else { &chess_tokenizer };
 
     // Output setup
     let mut writer: Option<SomabinWriter<BufWriter<File>>> = if !stream_mode {
@@ -247,7 +276,15 @@ fn cmd_tokenize(
             }
         }
 
-        // Tokenize
+        // Tokenize (only chess games for now)
+        if is_ugn {
+            if let Some(game_type) = game.tags.get("_type") {
+                if game_type != "chess" {
+                    total_filtered += 1;
+                    continue;
+                }
+            }
+        }
         match tokenizer.tokenize(&game, &vocab) {
             Some(tgame) => {
                 if let Some(ref mut w) = writer {
@@ -528,6 +565,34 @@ fn cmd_split(
 
     eprintln!("  Train: {} ({:.1} MB)", train_path.display(), train_size as f64 / 1_048_576.0);
     eprintln!("  Val:   {} ({:.1} MB)", val_path.display(), val_size as f64 / 1_048_576.0);
+
+    Ok(())
+}
+
+fn cmd_convert(input: PathBuf, output: Option<PathBuf>) -> Result<()> {
+    let start = Instant::now();
+
+    let reader = ailed_soulsteal::io::open_input(&input)?;
+
+    let mut writer: Box<dyn Write> = if let Some(ref out_path) = output {
+        Box::new(BufWriter::new(
+            File::create(out_path)
+                .with_context(|| format!("Failed to create {}", out_path.display()))?,
+        ))
+    } else {
+        Box::new(BufWriter::new(io::stdout()))
+    };
+
+    let count = pgn_to_ugn(reader, &mut *writer)?;
+    writer.flush()?;
+
+    let elapsed = start.elapsed().as_secs_f64();
+    eprintln!("Converted {} games to UGN in {:.1}s", count, elapsed);
+
+    if let Some(out_path) = &output {
+        let size = std::fs::metadata(out_path)?.len();
+        eprintln!("  Output: {} ({:.1} KB)", out_path.display(), size as f64 / 1024.0);
+    }
 
     Ok(())
 }

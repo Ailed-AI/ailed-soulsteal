@@ -1,6 +1,6 @@
 use std::io::BufRead;
 
-use shakmaty::{Chess, Move, Position, Role};
+use shakmaty::{Chess, Move, Position, Role, uci::UciMove};
 
 use crate::game::{GameParser, GameTokenizer, RawGame, TokenizedGame, outcome, special};
 use crate::vocab::Vocab;
@@ -237,6 +237,81 @@ fn uci_string(m: &Move) -> String {
             format!("{}{}", king, king_to)
         }
         Move::Put { .. } => String::new(), // crazyhouse, not relevant
+    }
+}
+
+/// Chess tokenizer for UCI moves (used by UGN parser).
+/// Unlike ChessTokenizer which expects SAN, this expects UCI notation.
+pub struct UciChessTokenizer;
+
+impl GameTokenizer for UciChessTokenizer {
+    fn tokenize(&self, game: &RawGame, vocab: &Vocab) -> Option<TokenizedGame> {
+        let uci_moves = &game.moves;
+        if uci_moves.len() < 4 {
+            return None;
+        }
+
+        let mut pos = Chess::default();
+        let mut token_ids = vec![special::BOS];
+        let mut turn_ids = vec![0u8];
+        let mut category_ids = vec![0u8];
+
+        for uci_str in uci_moves {
+            // Parse UCI move
+            let uci: UciMove = uci_str.parse().ok()?;
+            let m = uci.to_move(&pos).ok()?;
+
+            // Look up in vocabulary
+            let token_id = vocab.get(uci_str)?;
+
+            // Piece category
+            let category = role_to_category(m.role());
+
+            // Turn: 0 = white, 1 = black
+            let turn = if pos.turn().is_white() { 0u8 } else { 1u8 };
+
+            token_ids.push(token_id);
+            turn_ids.push(turn);
+            category_ids.push(category);
+
+            // Apply move
+            pos = pos.play(&m).ok()?;
+        }
+
+        // Outcome token
+        let outcome_val = match game.result.as_deref() {
+            Some("1-0") => {
+                token_ids.push(special::WIN);
+                turn_ids.push(0);
+                category_ids.push(0);
+                outcome::WIN
+            }
+            Some("0-1") => {
+                token_ids.push(special::LOSS);
+                turn_ids.push(0);
+                category_ids.push(0);
+                outcome::LOSS
+            }
+            Some("1/2-1/2") => {
+                token_ids.push(special::DRAW);
+                turn_ids.push(0);
+                category_ids.push(0);
+                outcome::DRAW
+            }
+            _ => outcome::UNKNOWN,
+        };
+
+        // EOS
+        token_ids.push(special::EOS);
+        turn_ids.push(0);
+        category_ids.push(0);
+
+        Some(TokenizedGame {
+            token_ids,
+            turn_ids,
+            category_ids,
+            outcome: outcome_val,
+        })
     }
 }
 
