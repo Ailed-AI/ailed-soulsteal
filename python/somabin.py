@@ -90,7 +90,7 @@ def read_game(mm: mmap.mmap, offset: int) -> dict:
 class SomabinDataset:
     """Memory-mapped dataset for .somabin files.
 
-    Compatible with PyTorch DataLoader — implements __len__ and __getitem__.
+    Returns raw numpy arrays. For PyTorch training, use SomaTrainingDataset.
     """
 
     def __init__(self, path: str | Path):
@@ -123,6 +123,110 @@ class SomabinDataset:
             f"type={gt}, "
             f"vocab={self.header['vocab_size']})"
         )
+
+
+class SomaTrainingDataset:
+    """Drop-in replacement for ailed-soma's GameDataset.
+
+    Reads from .somabin via mmap. Returns the exact same dict format
+    that SelfSupervisedTrainer expects — no code changes needed in the trainer.
+
+    Usage:
+        from somabin import SomaTrainingDataset
+        train_ds = SomaTrainingDataset("train.somabin", max_seq_len=300)
+        val_ds = SomaTrainingDataset("val.somabin", max_seq_len=300)
+        # Pass directly to SelfSupervisedTrainer.train()
+
+    Or split a single file:
+        train_ds, val_ds = SomaTrainingDataset.split("data.somabin", val_ratio=0.1)
+    """
+
+    PAD = 0
+    WIN = 3
+    DRAW = 4
+    LOSS = 5
+
+    def __init__(self, path: str | Path, max_seq_len: int = 300, indices: list[int] | None = None):
+        self._ds = SomabinDataset(path)
+        self.max_seq_len = max_seq_len
+        self._indices = indices if indices is not None else list(range(len(self._ds)))
+
+    def __len__(self) -> int:
+        return len(self._indices)
+
+    def __getitem__(self, idx: int) -> dict:
+        import torch
+
+        raw = self._ds[self._indices[idx]]
+        tokens = raw["token_ids"].astype(np.int64).tolist()
+        turns = raw["turn_ids"].astype(np.int64).tolist()
+        categories = raw["category_ids"].astype(np.int64).tolist()
+
+        # Truncate to max_seq_len + 1 (need one extra for target shift)
+        max_len = self.max_seq_len + 1
+        tokens = tokens[:max_len]
+        turns = turns[:max_len]
+        categories = categories[:max_len]
+
+        length = len(tokens) - 1
+
+        # Split into input and target (next-token prediction)
+        input_tokens = tokens[:-1]
+        target_tokens = tokens[1:]
+        input_turns = turns[:-1]
+        target_categories = categories[1:]
+
+        # Outcome from the somabin record (already extracted)
+        outcome = int(raw["outcome"])  # 0=win, 1=draw, 2=loss
+
+        # Pad to max_seq_len
+        pad_len = self.max_seq_len - length
+        if pad_len > 0:
+            input_tokens = input_tokens + [self.PAD] * pad_len
+            target_tokens = target_tokens + [self.PAD] * pad_len
+            input_turns = input_turns + [0] * pad_len
+            target_categories = target_categories + [0] * pad_len
+
+        return {
+            "input_tokens": torch.tensor(input_tokens, dtype=torch.long),
+            "target_tokens": torch.tensor(target_tokens, dtype=torch.long),
+            "turns": torch.tensor(input_turns, dtype=torch.long),
+            "categories": torch.tensor(target_categories, dtype=torch.long),
+            "outcome": torch.tensor(outcome, dtype=torch.long),
+            "length": torch.tensor(length, dtype=torch.long),
+        }
+
+    @classmethod
+    def split(
+        cls,
+        path: str | Path,
+        max_seq_len: int = 300,
+        val_ratio: float = 0.1,
+        seed: int = 42,
+    ) -> tuple["SomaTrainingDataset", "SomaTrainingDataset"]:
+        """Split a single .somabin into train and val datasets.
+
+        Returns:
+            (train_dataset, val_dataset)
+        """
+        import random
+
+        ds = SomabinDataset(path)
+        n = len(ds)
+        indices = list(range(n))
+        random.Random(seed).shuffle(indices)
+
+        val_count = int(n * val_ratio)
+        train_indices = indices[val_count:]
+        val_indices = indices[:val_count]
+
+        return (
+            cls(path, max_seq_len=max_seq_len, indices=train_indices),
+            cls(path, max_seq_len=max_seq_len, indices=val_indices),
+        )
+
+    def __repr__(self) -> str:
+        return f"SomaTrainingDataset(games={len(self)}, max_seq_len={self.max_seq_len})"
 
 
 # --- CLI ---
