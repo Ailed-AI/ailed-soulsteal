@@ -164,13 +164,7 @@ The `GameParser` and `GameTokenizer` traits define the interface. Chess is the v
 
 ## Part of the AILED Ecosystem
 
-| Project | Role |
-|---------|------|
-| [ailed-soma](https://github.com/Ailed-AI/ailed-soma) | Self-supervised game predictor (the cartridge) |
-| **ailed-soulsteal** | Training data pipeline (this tool) |
-| [ailed-engine](https://github.com/Ailed-AI/ailed-engine) | Chess move predictor |
-| [ailed-grimoire](https://github.com/Ailed-AI/ailed-grimoire) | Game definition compiler |
-| [ailed-glyph](https://github.com/Ailed-AI/ailed-glyph) | Universal engine wrapper |
+**ailed-soulsteal** is the training data pipeline for the [AILED](https://github.com/Ailed-AI) cognitive architecture — a modular system where evolved brains add personality to game-playing AI. More components coming soon.
 
 ## License
 
